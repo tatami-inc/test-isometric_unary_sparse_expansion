@@ -47,7 +47,7 @@ int main(int argc, char* argv []) {
 
     // Doing the straightforward dense operation.
     {
-        std::vector<double> buffer(mat->ncol());
+        std::vector<double> buffer(nr);
         auto start = std::chrono::high_resolution_clock::now();
         auto wrk = mat->dense_column();
         double sum = 0;
@@ -56,7 +56,7 @@ int main(int argc, char* argv []) {
             for (int r = 0; r < nr; ++r) {
                 buffer[r] = std::exp(buffer[r]);
             }
-            sum += std::accumulate(buffer.begin(), buffer.begin() + nr, 0.0);
+            sum += std::accumulate(buffer.begin(), buffer.end(), 0.0);
         }
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
@@ -65,7 +65,7 @@ int main(int argc, char* argv []) {
 
     // Doing the sparse expanded operation.
     { 
-        std::vector<double> buffer(mat->ncol());
+        std::vector<double> buffer(nr);
         auto start = std::chrono::high_resolution_clock::now();
         auto wrk = mat->dense_column();
         double sum = 0;
@@ -75,7 +75,7 @@ int main(int argc, char* argv []) {
             for (int r = 0; r < nr; ++r) {
                 buffer[r] = (buffer[r] ? std::exp(buffer[r]) : 1.0);
             }
-            sum += std::accumulate(buffer.begin(), buffer.begin() + nr, 0.0);
+            sum += std::accumulate(buffer.begin(), buffer.end(), 0.0);
         }
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
@@ -84,9 +84,9 @@ int main(int argc, char* argv []) {
 
     // Doing the sparse expanded operation (II).
     { 
-        std::vector<double> full(mat->ncol());
-        std::vector<double> xbuffer(mat->ncol());
-        std::vector<int> ibuffer(mat->ncol());
+        std::vector<double> full(nr);
+        std::vector<double> xbuffer(nr);
+        std::vector<int> ibuffer(nr);
 
         auto start = std::chrono::high_resolution_clock::now();
         auto wrk = mat->sparse_column();
@@ -98,7 +98,7 @@ int main(int argc, char* argv []) {
             for (int r = 0; r < range.number; ++r) {
                 full[range.index[r]] = std::exp(range.value[r]);
             }
-            sum += std::accumulate(full.begin(), full.begin() + nr, 0.0);
+            sum += std::accumulate(full.begin(), full.end(), 0.0);
         }
         auto stop = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
