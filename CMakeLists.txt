@@ -8,6 +8,7 @@ project(testing
 set(CMAKE_CXX_STANDARD 17)
 
 add_executable(expanded expanded.cpp)
+add_executable(indexed indexed.cpp)
 
 include(FetchContent)
 
@@ -28,3 +29,4 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(cli11)
 
 target_link_libraries(expanded tatami CLI11::CLI11)
+target_link_libraries(indexed tatami CLI11::CLI11)
