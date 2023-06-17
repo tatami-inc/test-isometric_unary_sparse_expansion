@@ -4,6 +4,9 @@
 
 #include "tatami/tatami.hpp"
 
+#include <cmath>
+#define OPERATION(X) std::exp(X)
+
 #include <chrono>
 #include <vector>
 #include <queue>
@@ -62,7 +65,7 @@ int main(int argc, char* argv []) {
         for (int c = 0; c < nc; ++c) {
             wrk->fetch_copy(c, buffer.data());
             for (int r = 0; r < indices.size(); ++r) {
-                buffer[r] = std::exp(buffer[r]);
+                buffer[r] = OPERATION(buffer[r]);
             }
             sum += std::accumulate(buffer.begin(), buffer.end(), 0.0);
         }
@@ -72,6 +75,7 @@ int main(int argc, char* argv []) {
     }
 
     // Doing the sparse expanded operation.
+    const double constant = OPERATION(0.0);
     { 
         std::vector<double> buffer(indices.size());
         auto start = std::chrono::high_resolution_clock::now();
@@ -81,7 +85,7 @@ int main(int argc, char* argv []) {
         for (int c = 0; c < nc; ++c) {
             wrk->fetch_copy(c, buffer.data());
             for (int r = 0; r < indices.size(); ++r) {
-                buffer[r] = (buffer[r] ? std::exp(buffer[r]) : 1.0);
+                buffer[r] = (buffer[r] ? OPERATION(buffer[r]) : constant);
             }
             sum += std::accumulate(buffer.begin(), buffer.end(), 0.0);
         }
@@ -102,9 +106,9 @@ int main(int argc, char* argv []) {
 
         for (int c = 0; c < nc; ++c) {
             auto range = wrk->fetch(c, xbuffer.data(), ibuffer.data());
-            std::fill(full.begin(), full.end(), 1.0);
+            std::fill(full.begin(), full.end(), constant);
             for (int r = 0; r < range.number; ++r) {
-                full[revmap[range.index[r]]] = std::exp(range.value[r]);
+                full[revmap[range.index[r]]] = OPERATION(range.value[r]);
             }
             sum += std::accumulate(full.begin(), full.end(), 0.0);
         }
