@@ -2,15 +2,72 @@
 #include "CLI/Formatter.hpp"
 #include "CLI/Config.hpp"
 
-#include "tatami/tatami.hpp"
+#include "nanobench.h"
 
 #include <cmath>
 #define OPERATION(X) std::exp(X)
 
-#include <chrono>
 #include <vector>
-#include <queue>
 #include <random>
+
+template<bool condition_>
+double run_dense(size_t nr, const std::vector<std::vector<int> >& i, const std::vector<std::vector<double> >& x) {
+    std::vector<double> buffer(nr);
+    double sum = 0;
+
+    for (int c = 0, nc = i.size(); c < nc; ++c) {
+        const auto& curi = i[c];
+        const auto& curx = x[c];
+        std::fill(buffer.begin(), buffer.end(), 0);
+        for (size_t i = 0, end = curi.size(); i < end; ++i) {
+            buffer[curi[i]] = curx[i];
+        }
+
+        if constexpr(condition_) {
+            const double constant = OPERATION(0.0);
+            for (auto& b : buffer) {
+                b = (b ? OPERATION(b) : constant);
+            }
+        } else {
+            for (auto& b : buffer) {
+                b = OPERATION(b);
+            }
+        }
+
+        sum += std::accumulate(buffer.begin(), buffer.end(), 0.0);
+    }
+
+    return sum;
+}
+
+template<bool index_>
+double run_sparse(size_t nr, const std::vector<std::vector<int> >& i, const std::vector<std::vector<double> >& x) {
+    std::vector<double> buffer(nr);
+    double sum = 0;
+
+    typename std::conditional<index_, std::vector<size_t>, bool>::type remap;
+    if constexpr(index_) {
+        remap.resize(nr);
+        std::iota(remap.begin(), remap.end(), 0);
+    }
+
+    for (int c = 0, nc = i.size(); c < nc; ++c) {
+        const auto& curi = i[c];
+        const auto& curx = x[c];
+        const double constant = OPERATION(0.0);
+        std::fill(buffer.begin(), buffer.end(), constant);
+        for (size_t i = 0, end = curi.size(); i < end; ++i) {
+            if constexpr(index_) {
+                buffer[remap[curi[i]]] = OPERATION(curx[i]);
+            } else {
+                buffer[curi[i]] = OPERATION(curx[i]);
+            }
+        }
+        sum += std::accumulate(buffer.begin(), buffer.end(), 0.0);
+    }
+
+    return sum;
+}
 
 int main(int argc, char* argv []) {
     CLI::App app{"Expanded testing checks"};
@@ -25,89 +82,58 @@ int main(int argc, char* argv []) {
     std::cout << "Testing a " << nr << " x " << nc << " matrix with a density of " << density << std::endl;
 
     // Simulating a sparse matrix, albeit not very efficiently, but whatever.
-    std::vector<int> i, j;
-    std::vector<double> x;
+    std::vector<std::vector<int> > i(nc);
+    std::vector<std::vector<double> > x(nc);
 
     std::mt19937_64 generator(1234567);
     std::uniform_real_distribution<double> distu;
     std::normal_distribution<double> distn;
 
     for (int c = 0; c < nc; ++c) {
+        auto& curi = i[c];
+        auto& curx = x[c];
         for (int r = 0; r < nr; ++r) {
             if (distu(generator) <= density) {
-                i.push_back(r);
-                j.push_back(c);
-                x.push_back(distn(generator));
+                curi.push_back(r);
+                curx.push_back(distn(generator));
             }
         }
     }
 
-    auto indptrs = tatami::compress_sparse_triplets<false>(nr, nc, x, i, j);
-    tatami::ArrayView<double> x_view (x.data(), x.size());
-    tatami::ArrayView<int> i_view (i.data(), i.size());
-    tatami::ArrayView<size_t> p_view (indptrs.data(), indptrs.size());
-    std::shared_ptr<tatami::NumericMatrix> mat(new tatami::CompressedSparseColumnMatrix<double, int, decltype(x_view), decltype(i_view), decltype(p_view)>(nr, nc, x_view, i_view, p_view));
+    double expected = run_dense<false>(nr, i, x);
+    std::cout << "Summation result should be " << expected << std::endl;
 
     // Doing the straightforward dense operation.
-    {
-        std::vector<double> buffer(nr);
-        auto start = std::chrono::high_resolution_clock::now();
-        auto wrk = mat->dense_column();
-        double sum = 0;
-        for (int c = 0; c < nc; ++c) {
-            auto range = wrk->fetch_copy(c, buffer.data());
-            for (int r = 0; r < nr; ++r) {
-                buffer[r] = OPERATION(buffer[r]);
-            }
-            sum += std::accumulate(buffer.begin(), buffer.end(), 0.0);
+    ankerl::nanobench::Bench().run("dense direct", [&](){
+        auto sum = run_dense<false>(nr, i, x);
+        if (sum != expected) {
+            std::cerr << "unexpected result from dense direct (" << sum << ")" << std::endl;
         }
-        auto stop = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
-        std::cout << "Dense time: " << duration.count() << " for " << sum << " sum" << std::endl;
-    }
+    });
+
+    // Doing the sparse conditional operation.
+    ankerl::nanobench::Bench().run("dense conditional", [&](){
+        auto sum = run_dense<true>(nr, i, x);
+        if (sum != expected) {
+            std::cerr << "unexpected result from dense conditional (" << sum << ")" << std::endl;
+        }
+    });
 
     // Doing the sparse expanded operation.
-    const double constant = OPERATION(0.0);
-    { 
-        std::vector<double> buffer(nr);
-        auto start = std::chrono::high_resolution_clock::now();
-        auto wrk = mat->dense_column();
-        double sum = 0;
-
-        for (int c = 0; c < nc; ++c) {
-            auto range = wrk->fetch(c, buffer.data());
-            for (int r = 0; r < nr; ++r) {
-                buffer[r] = (buffer[r] ? OPERATION(buffer[r]) : constant);
-            }
-            sum += std::accumulate(buffer.begin(), buffer.end(), 0.0);
+    ankerl::nanobench::Bench().run("sparse expanded", [&](){
+        auto sum = run_sparse<false>(nr, i, x);
+        if (sum != expected) {
+            std::cerr << "unexpected result from sparse expanded (" << sum << ")" << std::endl;
         }
-        auto stop = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
-        std::cout << "Expanded time: " << duration.count() << " for " << sum << " sum" << std::endl;
-    }
+    });
 
-    // Doing the sparse expanded operation (II).
-    { 
-        std::vector<double> full(nr);
-        std::vector<double> xbuffer(nr);
-        std::vector<int> ibuffer(nr);
-
-        auto start = std::chrono::high_resolution_clock::now();
-        auto wrk = mat->sparse_column();
-        double sum = 0;
-
-        for (int c = 0; c < nc; ++c) {
-            auto range = wrk->fetch(c, xbuffer.data(), ibuffer.data());
-            std::fill(full.begin(), full.end(), constant);
-            for (int r = 0; r < range.number; ++r) {
-                full[range.index[r]] = OPERATION(range.value[r]);
-            }
-            sum += std::accumulate(full.begin(), full.end(), 0.0);
+    // Doing the sparse expanded operation with an index map.
+    ankerl::nanobench::Bench().run("sparse indexed", [&](){
+        auto sum = run_sparse<true>(nr, i, x);
+        if (sum != expected) {
+            std::cerr << "unexpected result from sparse indexed (" << sum << ")" << std::endl;
         }
-        auto stop = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
-        std::cout << "Sparse time: " << duration.count() << " for " << sum << " sum" << std::endl;
-    }
+    });
 
     return 0;
 }
